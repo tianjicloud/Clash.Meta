@@ -38,8 +38,9 @@ type tcpTracker struct {
 	*TrackerInfo
 	manager *Manager
 
-	pushToManager bool `json:"-"`
-	direct        bool `json:"-"`
+	pushToManager bool           `json:"-"`
+	direct        bool           `json:"-"`
+	account       TrafficAccount `json:"-"`
 }
 
 func (tt *tcpTracker) ID() string {
@@ -55,6 +56,9 @@ func (tt *tcpTracker) Read(b []byte) (int, error) {
 	download := int64(n)
 	if tt.pushToManager {
 		tt.manager.PushDownloaded(tt.direct, download)
+		if tt.account != nil {
+			tt.account(0, download)
+		}
 	}
 	tt.DownloadTotal.Add(download)
 	return n, err
@@ -65,6 +69,9 @@ func (tt *tcpTracker) ReadBuffer(buffer *buf.Buffer) (err error) {
 	download := int64(buffer.Len())
 	if tt.pushToManager {
 		tt.manager.PushDownloaded(tt.direct, download)
+		if tt.account != nil {
+			tt.account(0, download)
+		}
 	}
 	tt.DownloadTotal.Add(download)
 	return
@@ -74,6 +81,9 @@ func (tt *tcpTracker) UnwrapReader() (io.Reader, []N.CountFunc) {
 	return tt.Conn, []N.CountFunc{func(download int64) {
 		if tt.pushToManager {
 			tt.manager.PushDownloaded(tt.direct, download)
+			if tt.account != nil {
+				tt.account(0, download)
+			}
 		}
 		tt.DownloadTotal.Add(download)
 	}}
@@ -84,6 +94,9 @@ func (tt *tcpTracker) Write(b []byte) (int, error) {
 	upload := int64(n)
 	if tt.pushToManager {
 		tt.manager.PushUploaded(tt.direct, upload)
+		if tt.account != nil {
+			tt.account(upload, 0)
+		}
 	}
 	tt.UploadTotal.Add(upload)
 	return n, err
@@ -94,6 +107,9 @@ func (tt *tcpTracker) WriteBuffer(buffer *buf.Buffer) (err error) {
 	err = tt.Conn.WriteBuffer(buffer)
 	if tt.pushToManager {
 		tt.manager.PushUploaded(tt.direct, upload)
+		if tt.account != nil {
+			tt.account(upload, 0)
+		}
 	}
 	tt.UploadTotal.Add(upload)
 	return
@@ -103,6 +119,9 @@ func (tt *tcpTracker) UnwrapWriter() (io.Writer, []N.CountFunc) {
 	return tt.Conn, []N.CountFunc{func(upload int64) {
 		if tt.pushToManager {
 			tt.manager.PushUploaded(tt.direct, upload)
+			if tt.account != nil {
+				tt.account(upload, 0)
+			}
 		}
 		tt.UploadTotal.Add(upload)
 	}}
@@ -151,6 +170,18 @@ func NewTCPTracker(conn C.Conn, manager *Manager, metadata *C.Metadata, rule C.R
 		tt.TrackerInfo.RulePayload = rule.Payload()
 	}
 
+	if pushToManager && NewTrafficAccount != nil {
+		tt.account = NewTrafficAccount(metadata, rule, conn.Chains())
+		if tt.account != nil {
+			if uploadTotal > 0 {
+				tt.account(uploadTotal, 0)
+			}
+			if downloadTotal > 0 {
+				tt.account(0, downloadTotal)
+			}
+		}
+	}
+
 	manager.Join(tt)
 	return tt
 }
@@ -160,8 +191,9 @@ type udpTracker struct {
 	*TrackerInfo
 	manager *Manager
 
-	pushToManager bool `json:"-"`
-	direct        bool `json:"-"`
+	pushToManager bool           `json:"-"`
+	direct        bool           `json:"-"`
+	account       TrafficAccount `json:"-"`
 }
 
 func (ut *udpTracker) ID() string {
@@ -177,6 +209,9 @@ func (ut *udpTracker) ReadFrom(b []byte) (int, net.Addr, error) {
 	download := int64(n)
 	if ut.pushToManager {
 		ut.manager.PushDownloaded(ut.direct, download)
+		if ut.account != nil {
+			ut.account(0, download)
+		}
 	}
 	ut.DownloadTotal.Add(download)
 	return n, addr, err
@@ -187,6 +222,9 @@ func (ut *udpTracker) WaitReadFrom() (data []byte, put func(), addr net.Addr, er
 	download := int64(len(data))
 	if ut.pushToManager {
 		ut.manager.PushDownloaded(ut.direct, download)
+		if ut.account != nil {
+			ut.account(0, download)
+		}
 	}
 	ut.DownloadTotal.Add(download)
 	return
@@ -197,6 +235,9 @@ func (ut *udpTracker) WriteTo(b []byte, addr net.Addr) (int, error) {
 	upload := int64(n)
 	if ut.pushToManager {
 		ut.manager.PushUploaded(ut.direct, upload)
+		if ut.account != nil {
+			ut.account(upload, 0)
+		}
 	}
 	ut.UploadTotal.Add(upload)
 	return n, err
@@ -243,6 +284,18 @@ func NewUDPTracker(conn C.PacketConn, manager *Manager, metadata *C.Metadata, ru
 	if rule != nil {
 		ut.TrackerInfo.Rule = rule.RuleType().String()
 		ut.TrackerInfo.RulePayload = rule.Payload()
+	}
+
+	if pushToManager && NewTrafficAccount != nil {
+		ut.account = NewTrafficAccount(metadata, rule, conn.Chains())
+		if ut.account != nil {
+			if uploadTotal > 0 {
+				ut.account(uploadTotal, 0)
+			}
+			if downloadTotal > 0 {
+				ut.account(0, downloadTotal)
+			}
+		}
 	}
 
 	manager.Join(ut)
